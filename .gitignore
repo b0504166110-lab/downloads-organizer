@@ -1,0 +1,27 @@
+# Secrets - never commit
+.env
+*.key
+*key*.txt
+
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated test folder (fake files)
+test_data/sandbox/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Private working plan (stays local)
+PLAN.md
+
+# Files waiting to be deleted by hand
+_to_delete/

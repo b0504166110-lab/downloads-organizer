@@ -1,0 +1,7 @@
+[browser]
+# privacy: do not send usage statistics
+gatherUsageStats = false
+
+[server]
+# the app is for this computer only
+address = "localhost"

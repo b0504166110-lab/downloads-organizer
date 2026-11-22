@@ -1,0 +1,33 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	scan_folder(scan_folder)
+	handle_duplicates(handle_duplicates)
+	classify_by_name(classify_by_name)
+	read_content(read_content)
+	classify_with_content(classify_with_content)
+	build_plan(build_plan)
+	human_review(human_review)
+	execute_actions(execute_actions)
+	report(report)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> scan_folder;
+	build_plan --> human_review;
+	classify_by_name -.-> build_plan;
+	classify_by_name -.-> read_content;
+	classify_with_content --> build_plan;
+	execute_actions --> report;
+	handle_duplicates --> classify_by_name;
+	human_review -.-> execute_actions;
+	human_review -.-> read_content;
+	human_review -.-> report;
+	read_content --> classify_with_content;
+	scan_folder --> handle_duplicates;
+	report --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
