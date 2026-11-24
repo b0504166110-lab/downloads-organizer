@@ -31,8 +31,8 @@ CONTENT_EXTENSIONS = TEXT_EXTENSIONS | {".pdf", ".docx", ".pptx", ".xlsx", ".zip
 # ---------- folder name sanitizing ----------
 
 INVALID_NAME_CHARS = r'[<>:"/\\|?*\x00-\x1f]'
-# Direction-control characters can make "x‮fdp.js" look like "xsj.pdf" - always removed
-BIDI_CONTROLS = re.compile(r"[؜‎‏‪-‮⁦-⁩]")
+# Direction-control characters can make "x" + U+202E + "fdp.js" look like "xsj.pdf" - always removed
+BIDI_CONTROLS = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 EXTENSION_AT_END = re.compile(r"\.[A-Za-z0-9]{1,5}$")
 # Files that run on double-click: the model never suggests a new name for them,
 # so a file's own content cannot make it look like a document.
@@ -412,7 +412,7 @@ def sanitize_file_stem(stem: str) -> str:
 def strip_extensions(stem: str) -> str:
     """
     Remove everything that looks like an extension at the end, in a loop until nothing changes:
-    'invoice.pdf.' -> 'invoice', 'a.exe . pdf .' -> 'a', 'x‮fdp' -> 'xfdp'.
+    'invoice.pdf.' -> 'invoice', 'a.exe . pdf .' -> 'a', 'x' + U+202E + 'fdp' -> 'xfdp'.
     Trailing dots and spaces are removed BEFORE each step (Windows drops them anyway,
     so 'invoice.pdf.' + '.js' would become 'invoice.pdf.js').
     """
