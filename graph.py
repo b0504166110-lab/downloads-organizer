@@ -15,6 +15,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 import config
+import folders
 import nodes
 from state import GraphState
 
@@ -123,11 +124,13 @@ def graph_dot(graph, status: dict[str, tuple[str, float]]) -> str:
 
 
 def start_run(graph, source_dir: str | None = None, dest_root: str | None = None,
-              thread_id: str | None = None, on_progress=None) -> dict:
-    """Run from the start until the graph stops for approval (or finishes)."""
+              thread_id: str | None = None, on_progress=None, folder_list: list[dict] | None = None) -> dict:
+    """Run from the start until the graph stops for approval (or finishes).
+    folder_list: [{name, description}] - the user's folders; None = the saved list (folders.json) or the default."""
     thread_id = thread_id or str(uuid.uuid4())
     initial = {"source_dir": str(source_dir or config.SOURCE_DIR),
-               "dest_root": str(dest_root or config.DEST_ROOT)}
+               "dest_root": str(dest_root or config.DEST_ROOT),
+               "folder_list": folder_list if folder_list is not None else folders.load_folders()}
     return _run(graph, initial, thread_id, on_progress)
 
 

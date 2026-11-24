@@ -16,6 +16,7 @@ from langgraph.types import interrupt
 
 import config
 import file_tools
+import folders as folder_list_tools
 from prompts import as_sent, build_content_messages, build_name_messages
 from state import ClassificationBatch, GraphState
 
@@ -73,14 +74,16 @@ def _ask(messages_for, items: list, key, label: str = "") -> dict[str, dict]:
     return results
 
 
-def classify_names(names: list[str], folders: list[str], label: str = "") -> dict[str, dict]:
-    """Classify files by name. Returns {name: classification}."""
-    return _ask(lambda batch: build_name_messages(batch, folders), names, key=lambda n: n, label=label)
+def classify_names(names: list[str], folders: list[str], label: str = "",
+                   descriptions: dict[str, str] | None = None) -> dict[str, dict]:
+    """Classify files by name. Returns {name: classification}. descriptions=None -> the default list."""
+    return _ask(lambda batch: build_name_messages(batch, folders, descriptions), names, key=lambda n: n, label=label)
 
 
-def classify_contents(pairs: list[tuple[str, str]], folders: list[str], label: str = "") -> dict[str, dict]:
-    """Classify files by (name, text). Returns {name: classification}."""
-    return _ask(lambda batch: build_content_messages(batch, folders), pairs, key=lambda p: p[0], label=label)
+def classify_contents(pairs: list[tuple[str, str]], folders: list[str], label: str = "",
+                      descriptions: dict[str, str] | None = None) -> dict[str, dict]:
+    """Classify files by (name, text). Returns {name: classification}. descriptions=None -> the default list."""
+    return _ask(lambda batch: build_content_messages(batch, folders, descriptions), pairs, key=lambda p: p[0], label=label)
 
 
 def _unclassified(reason: str) -> dict:
@@ -145,10 +148,13 @@ def scan_folder(state: GraphState) -> dict:
     files, skipped = file_tools.scan_folder(state["source_dir"])
     _progress(f"נמצאו {len(files)} קבצים, {len(skipped)} דולגו")
     on_disk = file_tools.list_existing_folders(state["dest_root"])
-    # Folders the model may choose from: the base list + approved folders already on disk.
-    folders = list(config.BASE_FOLDERS)
+    # The user's list (cleaned again here - the graph does not trust its input), or the default list.
+    folder_list, _ = folder_list_tools.clean_folders(state.get("folder_list") or folder_list_tools.default_folders())
+    # Folders the model may choose from: the user's list + folders already on disk.
+    folders = [f["name"] for f in folder_list]
     folders += [f for f in on_disk if f not in folders and f != config.UNCLASSIFIED_FOLDER]
     return {"files": files, "skipped": skipped, "existing_folders": folders,
+            "folder_descriptions": folder_list_tools.descriptions(folder_list),
             "classifications": {}, "content_requests": [], "content_texts": {},
             "excluded": [], "deleted_duplicates": [], "executed": []}
 
@@ -187,7 +193,8 @@ def handle_duplicates(state: GraphState) -> dict:
 def classify_by_name(state: GraphState) -> dict:
     folders = state["existing_folders"]
     names = [f["name"] for f in state["files"]]
-    answers = classify_names(names, folders, label="מסווג לפי שם") if names else {}
+    answers = (classify_names(names, folders, label="מסווג לפי שם", descriptions=state.get("folder_descriptions"))
+               if names else {})
 
     classifications, requests = {}, []
     for f in state["files"]:
@@ -236,7 +243,9 @@ def read_content(state: GraphState) -> dict:
 
 def classify_with_content(state: GraphState) -> dict:
     texts = state.get("content_texts", {})
-    answers = classify_contents(list(texts.items()), state["existing_folders"], label="מסווג לפי תוכן") if texts else {}
+    answers = (classify_contents(list(texts.items()), state["existing_folders"], label="מסווג לפי תוכן",
+                                 descriptions=state.get("folder_descriptions"))
+               if texts else {})
     classifications = dict(state["classifications"])
     for name in texts:
         c = answers.get(name)

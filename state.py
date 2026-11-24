@@ -35,7 +35,9 @@ class ClassificationBatch(BaseModel):
 class GraphState(TypedDict, total=False):
     source_dir: str
     dest_root: str
-    existing_folders: list[str]     # base folders + folders already on disk
+    folder_list: list[dict]         # the user's folder list: {name, description} (see folders.py)
+    existing_folders: list[str]     # names from folder_list + folders already on disk
+    folder_descriptions: dict[str, str]  # name -> description, for the prompt
     files: list[dict]               # files to organize (from file_tools.scan_folder)
     skipped: list[dict]             # temporary / system files that were not touched
     deleted_duplicates: list[dict]  # identical copies sent to the Recycle Bin

@@ -25,3 +25,6 @@ PLAN.md
 
 # Files waiting to be deleted by hand
 _to_delete/
+
+# The user's own folder list (edited in the UI)
+folders.json

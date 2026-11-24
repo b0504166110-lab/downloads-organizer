@@ -17,6 +17,7 @@ import streamlit as st
 
 import config
 import file_tools
+import folders
 from graph import build_graph, resume_run, start_run
 
 st.set_page_config(page_title="סידור תיקיית הורדות", layout="wide")
@@ -104,6 +105,47 @@ def run_safely(fn, *args) -> None:
 
 # ---------- screens ----------
 
+def folders_editor() -> tuple[list[dict], list[str]]:
+    """
+    The destination folders on the start screen: name + description, rows can be added and deleted.
+    The images folder is shown above the table and is not editable (the code sends every image there);
+    it keeps its place in the list, so an unchanged list gives exactly the default prompt.
+    Returns (clean folder list, problems to show).
+    """
+    if "folder_rows" not in st.session_state:
+        st.session_state.folder_rows = folders.load_folders()
+        st.session_state.folders_round = 0
+    rows = st.session_state.folder_rows
+    images_at = next((i for i, f in enumerate(rows) if f["name"] == config.IMAGES_FOLDER), len(rows))
+    editable = [f for f in rows if f["name"] != config.IMAGES_FOLDER]
+
+    st.subheader("תיקיות היעד")
+    st.caption(f"התיקייה '{config.IMAGES_FOLDER}' קבועה: כל תמונה נשלחת אליה. "
+               "את השאר אפשר לשנות, למחוק ולהוסיף (שורה ריקה בתחתית הטבלה). "
+               "תיאור טוב עוזר למודל לבחור נכון. הרשימה נשמרת כשלוחצים 'התחל'.")
+    edited = st.data_editor(
+        pd.DataFrame(editable, columns=["name", "description"]),
+        key=f"folders_{st.session_state.folders_round}",
+        num_rows="dynamic", hide_index=True, width="stretch",
+        column_config={
+            "name": st.column_config.TextColumn("שם", max_chars=60),
+            "description": st.column_config.TextColumn("תיאור (לא חובה)", width="large",
+                                                       max_chars=folders.MAX_DESCRIPTION),
+        },
+    )
+    if st.button("חזרה לרשימת ברירת המחדל"):
+        st.session_state.folder_rows = folders.default_folders()
+        st.session_state.folders_round += 1  # new key -> the table shows the default list
+        st.rerun()
+
+    new_rows = edited.fillna("").to_dict("records")
+    new_rows.insert(min(images_at, len(new_rows)), {"name": config.IMAGES_FOLDER, "description": ""})
+    clean, problems = folders.clean_folders(new_rows)
+    for problem in problems:
+        st.warning(problem)
+    return clean, problems
+
+
 def start_screen() -> None:
     st.write(f"**מקור:** `{config.SOURCE_DIR}`")
     st.write(f"**יעד:** `{config.DEST_ROOT}`")
@@ -121,9 +163,13 @@ def start_screen() -> None:
             st.warning("השליחה ל-LangSmith דלוקה: שמות ותוכן של קבצים יעלו לאתר. כדאי לכבות (LANGSMITH_TRACING=false).")
         confirmed = st.checkbox("אני מבינה שזו התיקייה האמיתית")
 
+    folder_list, _ = folders_editor()
+
     if st.button("התחל", type="primary", disabled=not confirmed):
+        folders.save_folders(folder_list)
+        st.session_state.folder_rows = folder_list
         st.session_state.timings, st.session_state.node_status = [], {}
-        run_safely(start_run, get_graph())
+        run_safely(lambda on_progress: start_run(get_graph(), on_progress=on_progress, folder_list=folder_list))
         st.rerun()
 
 
