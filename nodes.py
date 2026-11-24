@@ -16,7 +16,7 @@ from langgraph.types import interrupt
 
 import config
 import file_tools
-from prompts import build_content_messages, build_name_messages
+from prompts import as_sent, build_content_messages, build_name_messages
 from state import ClassificationBatch, GraphState
 
 
@@ -55,12 +55,15 @@ def _ask(messages_for, items: list, key, label: str = "") -> dict[str, dict]:
     for attempt in range(2):  # first try + one retry for missing files
         batches = list(_batches(pending, config.BATCH_SIZE))
         with ThreadPoolExecutor(max_workers=config.PARALLEL_CALLS) as pool:
-            futures = {pool.submit(llm.invoke, messages_for(b)): {key(i) for i in b} for b in batches}
+            # {name as the model saw it: real name} - names are escaped in the prompt (see prompts.as_sent)
+            futures = {pool.submit(llm.invoke, messages_for(b)):
+                       {seen: key(i) for i in b for seen in as_sent(key(i))} for b in batches}
             for done, future in enumerate(as_completed(futures), start=1):
                 wanted = futures[future]
                 for c in future.result().classifications:
-                    if c.file_name in wanted and c.file_name not in results:  # exact match only, no guessing
-                        results[c.file_name] = c.model_dump()
+                    real = wanted.get(c.file_name)  # exact match only, no guessing
+                    if real is not None and real not in results:
+                        results[real] = {**c.model_dump(), "file_name": real}
                 if label:  # progress is reported from this (main) thread only
                     retry = " (ניסיון חוזר)" if attempt else ""
                     _progress(f"{label}: קבוצה {done} מתוך {len(batches)}{retry}", done, len(batches))

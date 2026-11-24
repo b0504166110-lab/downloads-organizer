@@ -55,13 +55,32 @@ def system_prompt() -> str:
     return SYSTEM_PROMPT
 
 
+def _as_data(text: str) -> str:
+    """
+    Data from the disk can never close or open our tags: '<' and '>' become look-alike
+    characters that are not tags. Without this, a file containing '</content>' could end
+    the data block and put its own "instructions" outside the tags.
+    """
+    return (text or "").replace("<", "‹").replace(">", "›")
+
+
+def _as_attribute(name: str) -> str:
+    """A file name inside name="...": also a quote cannot end the attribute."""
+    return _as_data(name).replace('"', "”")
+
+
+def as_sent(name: str) -> set[str]:
+    """Every form in which a file name appears in the prompt - to match the model's answer back."""
+    return {name, _as_data(name), _as_attribute(name)}
+
+
 def _folders_block(existing_folders: list[str]) -> str:
     return "\n".join(f"- {name}" for name in existing_folders)
 
 
 def build_name_messages(file_names: list[str], existing_folders: list[str]) -> list[tuple[str, str]]:
     """Messages for classifying files by their names only."""
-    files_block = "\n".join(f"- {name}" for name in file_names)
+    files_block = "\n".join(f"- {_as_data(name)}" for name in file_names)
     user = (
         f"Existing folders:\n{_folders_block(existing_folders)}\n\n"
         f"Classify these files by their names:\n<files>\n{files_block}\n</files>"
@@ -73,7 +92,7 @@ def build_content_messages(files_with_text: list[tuple[str, str]], existing_fold
     """Messages for classifying files using the beginning of their content."""
     parts = []
     for name, text in files_with_text:
-        parts.append(f'<file name="{name}">\n<content>\n{text}\n</content>\n</file>')
+        parts.append(f'<file name="{_as_attribute(name)}">\n<content>\n{_as_data(text)}\n</content>\n</file>')
     user = (
         f"Existing folders:\n{_folders_block(existing_folders)}\n\n"
         "The names of these files were unclear, so here is the beginning of each file. "
