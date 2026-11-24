@@ -216,13 +216,13 @@ def read_content(state: GraphState) -> dict:
     requests = state.get("content_requests", [])
     for i, name in enumerate(requests, start=1):
         _progress(f"קורא תוכן: {i} מתוך {len(requests)}", i, len(requests))
-        text = (file_tools.extract_text(paths[name], config.CONTENT_MAX_CHARS, config.PDF_MAX_PAGES)
-                if name in paths else None)
+        text, why_not = (file_tools.text_for_model(paths[name], config.CONTENT_MAX_CHARS, config.PDF_MAX_PAGES)
+                         if name in paths else (None, "לא הצלחתי לקרוא את התוכן"))
         if text:
             texts[name] = text
-        else:  # unreadable (wrong type, broken, encrypted) -> keep the name-based answer, say so
+        else:  # unreadable, or looks like a key/password -> keep the name-based answer, say why
             c = dict(classifications.get(name, {}))
-            c["reason"] = (c.get("reason", "") + " (לא הצלחתי לקרוא את התוכן)").strip()
+            c["reason"] = (c.get("reason", "") + f" ({why_not})").strip()
             classifications[name] = c
     return {"content_texts": texts, "classifications": classifications}
 
@@ -270,6 +270,8 @@ def build_plan(state: GraphState) -> dict:
 
         new_name = ""
         stem = c.get("new_name") if c.get("new_name_by_user") else c.get("suggested_name")
+        if not c.get("new_name_by_user") and f["ext"] in file_tools.NO_RENAME_SUGGESTION:
+            stem = ""  # a file that runs on double-click never gets a name suggested by its own content
         if not c.get("new_name_by_user") and not stem:
             clean = file_tools.without_copy_suffix(name)          # drop "(1)", "(2)"... added to copies
             if clean != Path(name).stem:

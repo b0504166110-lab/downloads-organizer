@@ -31,6 +31,12 @@ CONTENT_EXTENSIONS = TEXT_EXTENSIONS | {".pdf", ".docx", ".pptx", ".xlsx", ".zip
 # ---------- folder name sanitizing ----------
 
 INVALID_NAME_CHARS = r'[<>:"/\\|?*\x00-\x1f]'
+# Direction-control characters can make "x‮fdp.js" look like "xsj.pdf" - always removed
+BIDI_CONTROLS = re.compile(r"[؜‎‏‪-‮⁦-⁩]")
+EXTENSION_AT_END = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+# Files that run on double-click: the model never suggests a new name for them,
+# so a file's own content cannot make it look like a document.
+NO_RENAME_SUGGESTION = {".js", ".html", ".htm", ".py"}
 WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL",
                     *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 MAX_FOLDER_NAME = 60
@@ -317,6 +323,50 @@ def extract_text(path: str | Path, max_chars: int = 1500, pdf_max_pages: int = 5
     return text[:max_chars] if text else None
 
 
+# ---------- secrets: never sent to the model ----------
+
+SECRET_NAME_WORDS = ("key", "secret", "password", "passwd", "token", "credential",
+                     "סיסמ", "מפתח")
+SECRET_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),                        # OpenAI (also sk-proj-...)
+    re.compile(r"lsv2_[A-Za-z0-9_]{20,}"),                       # LangSmith
+    re.compile(r"(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"),  # GitHub
+    re.compile(r"AKIA[0-9A-Z]{16}"),                             # AWS
+    re.compile(r"AIza[0-9A-Za-z_-]{30,}"),                       # Google
+    re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),                 # Slack
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),           # private keys
+    re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
+    re.compile(r"(api[_-]?key|secret|passw(or)?d|token|סיסמה)\s*[:=]\s*\S{6,}", re.IGNORECASE),
+]
+SECRET_SCAN_MARGIN = 300  # scan a bit past the limit, so a key cut at the edge is still caught
+
+
+def secret_in_name(name: str) -> bool:
+    lower = name.lower()
+    return any(word in lower for word in SECRET_NAME_WORDS)
+
+
+def contains_secret(text: str) -> bool:
+    return any(p.search(text) for p in SECRET_PATTERNS)
+
+
+def text_for_model(path: str | Path, max_chars: int = 1500, pdf_max_pages: int = 5) -> tuple[str | None, str]:
+    """
+    The beginning of a file, ONLY if it is safe to send to the model.
+    Returns (text, "") or (None, reason in Hebrew). Nothing is sent when the name or the
+    content looks like a key or password - not even a redacted version.
+    """
+    name = Path(path).name
+    if secret_in_name(name):
+        return None, "השם מרמז על סיסמה או מפתח, ולכן התוכן לא נשלח למודל"
+    text = extract_text(path, max_chars + SECRET_SCAN_MARGIN, pdf_max_pages)
+    if text is None:
+        return None, "לא הצלחתי לקרוא את התוכן"
+    if contains_secret(text):
+        return None, "נראה שיש בקובץ מפתח או סיסמה, ולכן התוכן לא נשלח למודל"
+    return text[:max_chars], ""
+
+
 # =====================================================================
 # Safety
 # =====================================================================
@@ -326,7 +376,8 @@ def sanitize_folder_name(name: str) -> str:
     Turn a folder name suggested by the model into one safe, single-level name.
     Raises ValueError if nothing usable is left.
     """
-    cleaned = re.sub(INVALID_NAME_CHARS, " ", name or "")
+    cleaned = BIDI_CONTROLS.sub("", name or "")
+    cleaned = re.sub(INVALID_NAME_CHARS, " ", cleaned)
     cleaned = cleaned.replace("..", " ")
     cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".").strip()
     cleaned = cleaned[:MAX_FOLDER_NAME].strip()
@@ -348,7 +399,8 @@ def without_copy_suffix(name: str) -> str:
 
 def sanitize_file_stem(stem: str) -> str:
     """A suggested file name (without extension) made safe. Raises ValueError if nothing usable is left."""
-    cleaned = re.sub(INVALID_NAME_CHARS, " ", stem or "")
+    cleaned = BIDI_CONTROLS.sub("", stem or "")
+    cleaned = re.sub(INVALID_NAME_CHARS, " ", cleaned)
     cleaned = cleaned.replace("..", " ")
     cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".").strip()
     cleaned = cleaned[:MAX_FILE_STEM].strip()
@@ -357,12 +409,34 @@ def sanitize_file_stem(stem: str) -> str:
     return cleaned
 
 
+def strip_extensions(stem: str) -> str:
+    """
+    Remove everything that looks like an extension at the end, in a loop until nothing changes:
+    'invoice.pdf.' -> 'invoice', 'a.exe . pdf .' -> 'a', 'x‮fdp' -> 'xfdp'.
+    Trailing dots and spaces are removed BEFORE each step (Windows drops them anyway,
+    so 'invoice.pdf.' + '.js' would become 'invoice.pdf.js').
+    """
+    s = stem or ""
+    while True:
+        before = s
+        s = BIDI_CONTROLS.sub("", s)
+        s = s.rstrip(" .\t")
+        s = EXTENSION_AT_END.sub("", s)
+        if s == before:
+            return s
+
+
 def renamed(original_name: str, new_stem: str) -> str:
-    """New name with the ORIGINAL extension - the extension never changes."""
+    """New name with the ORIGINAL extension - the extension never changes, and no double extensions."""
     suffix = Path(original_name).suffix
-    # Drop anything that looks like an extension ("x.docx", "x.exe"): no double extensions like "form.exe.xlsx"
-    stem = re.sub(r"(\.[A-Za-z0-9]{1,5})+\s*$", "", new_stem or "")
-    return sanitize_file_stem(stem) + suffix
+    # Strip and sanitize together until stable: sanitizing can expose a new extension
+    # ('a.exe:' -> 'a.exe') and so can cutting a long name.
+    stem = new_stem or ""
+    while True:
+        cleaned = sanitize_file_stem(strip_extensions(stem))  # raises ValueError if nothing is left
+        if cleaned == stem:
+            return cleaned + suffix
+        stem = cleaned
 
 
 def ensure_inside(path: str | Path, root: str | Path) -> Path:
